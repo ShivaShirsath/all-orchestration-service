@@ -18,13 +18,19 @@ import {
 } from './src/common/middleware/api-error.middleware';
 dotenv.config();
 
-const numCPUs = os.cpus().length;
+const parsedConcurrency = process.env.WEB_CONCURRENCY
+  ? parseInt(process.env.WEB_CONCURRENCY, 10)
+  : 1;
+const numWorkers =
+  Number.isFinite(parsedConcurrency) && parsedConcurrency > 0
+    ? parsedConcurrency
+    : 1;
 
-if (cluster.isPrimary) {
-  console.log(`Master ${process.pid} is running`);
+if (numWorkers > 1 && cluster.isPrimary) {
+  console.log(`Master ${process.pid} is running with ${numWorkers} workers`);
 
   // Fork workers
-  for (let i = 0; i < numCPUs; i++) {
+  for (let i = 0; i < numWorkers; i++) {
     cluster.fork();
   }
 
@@ -40,7 +46,10 @@ if (cluster.isPrimary) {
     const PORT: number = parseInt(process.env.PORT || '3009');
     const HOST: string = '0.0.0.0';
     const dataBaseType: string = process.env.DATABASE_TYPE || '';
-    const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [];
+    const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean);
     const appVersion =  process.env.APP_VERSION || 'All'
 
     app.use(requestIdMiddleware);

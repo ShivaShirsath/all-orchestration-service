@@ -148,8 +148,31 @@ class virtualIdService {
     }
 
     static async tokenStatus(user_id: string, token: string) {
-        const isActive = await checkTokenStatus(user_id, token);
-        return { isActive };
+        // 1. Check axl-login-service
+        try {
+            const isActive = await checkTokenStatus(user_id, token);
+            if (isActive) {
+                return { isActive: true };
+            }
+        } catch {
+            // axl-login-service failed or unavailable
+        }
+
+        // 2. Fallback to local MongoDB collection learnerai_virtual_ids
+        try {
+            const numericId = Number(user_id);
+            const query = !isNaN(numericId) && numericId > 0
+                ? { $or: [{ virtualId: numericId }, { userName: String(user_id) }] }
+                : { userName: String(user_id) };
+            const localUser = await virtualId.findOne(query);
+            if (localUser && localUser.token && localUser.token === token) {
+                return { isActive: true };
+            }
+        } catch (dbErr) {
+            console.error('Error checking local virtualId token:', dbErr);
+        }
+
+        return { isActive: false };
     }
 
 }

@@ -51,6 +51,7 @@ export const postJson = <T = any>(urlStr: string, body: unknown): Promise<T | nu
                         'Content-Type': 'application/json',
                         'Content-Length': Buffer.byteLength(data),
                     },
+                    timeout: 3000,
                 },
                 (res) => {
                     let responseBody = '';
@@ -87,6 +88,9 @@ export const postJson = <T = any>(urlStr: string, body: unknown): Promise<T | nu
                     });
                 },
             );
+            req.on('timeout', () => {
+                req.destroy(new Error('Request timed out'));
+            });
             req.on('error', (err: NodeJS.ErrnoException) => {
                 logAuthServiceEvent('auth_service_unreachable', {
                     url: urlStr,
@@ -108,16 +112,26 @@ export const postJson = <T = any>(urlStr: string, body: unknown): Promise<T | nu
 };
 
 // Checks whether `token` is the user's currently active session token, by asking
-// axl-login-service's tokenStatus API directly. Strictly no local fallback: either
-// axl-login-service answers true/false, or this throws AuthServiceUnavailableError.
+// axl-login-service's tokenStatus API directly.
 export const checkTokenStatus = async (userId: number | string, token: string): Promise<boolean> => {
     const loginServiceUrl = process.env.AXL_LOGIN_SERVICE_URL || '';
+    if (!loginServiceUrl) {
+        return false;
+    }
 
     try {
         const statusData: any = await postJson(loginServiceUrl, {
             user_id: Number(userId) || userId,
             token,
         });
+        const activeToken =
+            statusData?.responseObj?.responseDataParams?.data?.token ??
+            statusData?.data?.token ??
+            statusData?.token ??
+            null;
+        if (activeToken) {
+            return activeToken === token;
+        }
         const isActive =
             statusData?.responseObj?.responseDataParams?.data?.isActive ??
             statusData?.data?.isActive ??
@@ -131,9 +145,6 @@ export const checkTokenStatus = async (userId: number | string, token: string): 
             errorCode: err instanceof AuthServiceUnavailableError ? err.code ?? null : null,
             error: err instanceof Error ? err.message : String(err),
         });
-        if (err instanceof AuthServiceUnavailableError) {
-            throw err;
-        }
-        throw new AuthServiceUnavailableError('Not able to connect with axl-login-service', err);
+        return false;
     }
 };
