@@ -1,3 +1,4 @@
+import path from "path";
 import { DataSource } from "typeorm"
 import * as dotenv from 'dotenv';
 dotenv.config();
@@ -12,7 +13,11 @@ export const myDataSource = new DataSource({
     username: process.env.SQL_USERNAME,
     password: process.env.SQL_PASSWORD,
     database: process.env.SQL_DATABASE_NAME,
-    entities: ["src/sql_module/schema/*.ts"],
+    // Resolved from this file's folder so it works both under ts-node (.ts)
+    // and when running the compiled build from dist/ (.js).
+    entities: [path.join(__dirname, "../schema/*.{ts,js}")],
     logging: false,
-    synchronize: true,
+    // Schema auto-sync on every worker start. Default unchanged (true); set
+    // TYPEORM_SYNCHRONIZE=false in production once the schema is stable.
+    synchronize: process.env.TYPEORM_SYNCHRONIZE !== 'false',
 });

@@ -33,7 +33,13 @@ mongoDbRouter.use("/client-errors", clientErrorsRouter);
 export async function mongodbConnection(): Promise<void> {
     mongoose.set('strictQuery', false);
     try {
-        await mongoose.connect(MONGO_URL);
+        // Pool size is PER PROCESS (x cluster workers x pods). Mongoose's
+        // default is 100; large pools let more queries pile onto MongoDB at
+        // once rather than adding throughput.
+        await mongoose.connect(MONGO_URL, {
+            maxPoolSize: parseInt(process.env.MONGO_MAX_POOL_SIZE || '', 10) || 50,
+            minPoolSize: parseInt(process.env.MONGO_MIN_POOL_SIZE || '', 10) || 0,
+        });
         console.log("\n*************MONGODB connected**************\n");
     } catch (error) {
         console.error("unable to connect with database:", error);
