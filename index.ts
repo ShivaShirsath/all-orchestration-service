@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import * as dotenv from 'dotenv';
 import cluster from 'cluster';
+import fs from 'fs';
 import os from 'os';
 import compression from 'compression';
 import swaggerUi from 'swagger-ui-express';
@@ -18,7 +19,27 @@ import {
 } from './src/common/middleware/api-error.middleware';
 dotenv.config();
 
-const numCPUs = os.cpus().length;
+/**
+ * CPUs this container may actually use. os.cpus() reports the *host's* cores
+ * inside a container, so a pod limited to 2 vCPU on a 32-core node would fork
+ * 32 workers, each with its own MongoDB pool. WORKERS env var overrides.
+ */
+function workerCount(): number {
+  const fromEnv = parseInt(process.env.WORKERS ?? '', 10);
+  if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv;
+  try {
+    const [quota, period] = fs.readFileSync('/sys/fs/cgroup/cpu.max', 'utf8').trim().split(/\s+/);
+    if (quota !== 'max') return Math.max(1, Math.floor(Number(quota) / Number(period)));
+  } catch { /* not cgroup v2 */ }
+  try {
+    const quota = Number(fs.readFileSync('/sys/fs/cgroup/cpu/cpu.cfs_quota_us', 'utf8'));
+    const period = Number(fs.readFileSync('/sys/fs/cgroup/cpu/cpu.cfs_period_us', 'utf8'));
+    if (quota > 0 && period > 0) return Math.max(1, Math.floor(quota / period));
+  } catch { /* not cgroup v1 */ }
+  return os.cpus().length || 1;
+}
+
+const numCPUs = workerCount();
 
 if (cluster.isPrimary) {
   console.log(`Master ${process.pid} is running`);
@@ -139,9 +160,15 @@ if (cluster.isPrimary) {
     app.use(notFoundHandler);
     app.use(globalErrorHandler);
 
-    app.listen(PORT, HOST, () => {
+    const server = app.listen(PORT, HOST, () => {
       console.log(`Worker ${process.pid} is running on port ${PORT}`);
     });
+    // Node's default keep-alive timeout is 5 s. The gateway in front keeps idle
+    // upstream connections longer, so it can send a request on a socket this
+    // server is closing at that moment -> intermittent 502 Bad Gateway.
+    // Must be longer than the gateway's idle timeout (override per env).
+    server.keepAliveTimeout = parseInt(process.env.KEEP_ALIVE_TIMEOUT_MS || '', 10) || 65000;
+    server.headersTimeout = server.keepAliveTimeout + 1000;
   })();
 
 }
